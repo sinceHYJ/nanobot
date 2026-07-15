@@ -1507,6 +1507,7 @@ class AgentLoop:
     async def _state_restore(self, ctx: TurnContext) -> TurnState:
         """Restore checkpoint / pending user turn; extract documents."""
         msg = ctx.msg
+        logger.info("开始 restore")
 
         if msg.media:
             new_content, image_only = self._prepare_message_media(msg.content, msg.media)

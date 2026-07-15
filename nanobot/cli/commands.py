@@ -34,7 +34,7 @@ _log_handler_id = logger.add(
         "<cyan>{extra[channel]}</cyan> | "
         "<level>{message}</level>"
     ),
-    level="INFO",
+    level="DEBUG",
     colorize=None,
     filter=lambda record: record["extra"].setdefault("channel", "-") or True,
 )

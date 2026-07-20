@@ -353,6 +353,13 @@ class AgentRunner:
         )
 
         for iteration in range(spec.max_iterations):
+            logger.debug(
+                "[runner] iteration {} start | session={} msgs={} max_iter={}",
+                iteration,
+                spec.session_key or "default",
+                len(messages),
+                spec.max_iterations,
+            )
             try:
                 # Keep the persisted conversation untouched. Context governance
                 # may repair or compact historical messages for the model, but
@@ -391,6 +398,13 @@ class AgentRunner:
             )
             await hook.before_iteration(context)
             response = await self._request_model(spec, messages_for_model, hook, context)
+            logger.debug(
+                "[runner] LLM response | finish_reason={} tool_calls={} content_len={} thinking={}",
+                response.finish_reason,
+                len(response.tool_calls),
+                len(response.content or ""),
+                bool(response.reasoning_content),
+            )
             context.response = response
             context.tool_calls = list(response.tool_calls)
 
@@ -409,6 +423,10 @@ class AgentRunner:
                 context.streamed_reasoning = True
 
             if response.should_execute_tools:
+                logger.debug(
+                    "[runner] execute tools | names={}",
+                    [tc.name for tc in response.tool_calls],
+                )
                 context.tool_calls = list(response.tool_calls)
                 if hook.wants_streaming():
                     await hook.on_stream_end(context, resuming=True)
@@ -512,6 +530,10 @@ class AgentRunner:
                     spec.session_key or "default",
                 )
 
+            logger.debug(
+                "[runner] no tools to execute | finalizing turn | finish_reason={}",
+                response.finish_reason,
+            )
             clean = hook.finalize_content(context, response.content)
             if response.finish_reason != "error" and is_blank_text(clean):
                 empty_content_retries += 1
@@ -806,6 +828,16 @@ class AgentRunner:
         else:
             coro = spec.runtime.provider.chat_with_retry(**kwargs)
 
+        logger.debug(
+            "[runner] LLM request | model={} mode={} msgs={} tools={} temperature={}",
+            kwargs.get("model"),
+            "stream" if wants_streaming else ("progress_stream" if wants_progress_streaming else "chat"),
+            len(kwargs.get("messages") or []),
+            len(kwargs.get("tools") or []),
+            kwargs.get("temperature"),
+        )
+        logger.debug("[runner] LLM request messages (raw):\n{}", kwargs.get("messages"))
+
         # Streaming requests already have provider-level idle timeouts
         # (NANOBOT_STREAM_IDLE_TIMEOUT_S). Do not also apply the outer wall-clock
         # LLM timeout here, or healthy long reasoning streams can be killed just
@@ -861,6 +893,14 @@ class AgentRunner:
                 messages, response.content,
             )
             return await self._request_no_tools(spec, fallback_messages)
+        logger.debug(
+            "[runner] LLM response (raw) | finish_reason={} content_len={} tool_calls={} usage={}",
+            getattr(response, "finish_reason", None),
+            len(response.content or ""),
+            len(response.tool_calls),
+            response.usage,
+        )
+        logger.debug("[runner] LLM response content (raw):\n{}", response.content)
         return response
 
     @staticmethod
@@ -1183,6 +1223,11 @@ class AgentRunner:
                 RuntimeError(prep_error) if spec.fail_on_tool_error else None
             )
         await hook.before_execute_tool(context, tool_call, tool, params)
+        logger.debug(
+            "[runner] run tool | name={} params_keys={}",
+            tool_call.name,
+            list(params.keys()) if isinstance(params, dict) else None,
+        )
         try:
             if tool is not None:
                 result = await tool.execute(**params)
@@ -1233,6 +1278,11 @@ class AgentRunner:
             return result + hint, event, None
 
         await hook.after_execute_tool(context, tool_call, tool, params, result)
+        logger.debug(
+            "[runner] tool result | name={} status=ok len={}",
+            tool_call.name,
+            len(str(result)) if result is not None else 0,
+        )
 
         detail = "" if result is None else str(result)
         detail = detail.replace("\n", " ").strip()

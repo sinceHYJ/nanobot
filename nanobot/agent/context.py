@@ -6,6 +6,8 @@ import platform
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from loguru import logger
+
 from nanobot.agent.memory import MemoryStore
 from nanobot.agent.skills import SkillsLoader
 from nanobot.agent.tools import mcp as mcp_tools
@@ -87,10 +89,18 @@ class ContextBuilder:
         if always_skills:
             always_content = self.skills.load_skills_for_context(always_skills)
             if always_content:
+                logger.debug(
+                    "[context] inject ALWAYS skills names={} content_len={}",
+                    always_skills, len(always_content),
+                )
                 parts.append(f"# Active Skills\n\n{always_content}")
 
         skills_summary = self.skills.build_skills_summary(exclude=set(always_skills))
         if skills_summary:
+            logger.debug(
+                "[context] inject skills SUMMARY (always excluded) len={}",
+                len(skills_summary),
+            )
             parts.append(render_template("agent/skills_section.md", skills_summary=skills_summary))
 
         if include_memory_recent_history:

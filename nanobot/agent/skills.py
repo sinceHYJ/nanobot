@@ -7,6 +7,7 @@ import shutil
 from pathlib import Path
 
 import yaml
+from loguru import logger
 
 # Default builtin skills directory (relative to this file)
 BUILTIN_SKILLS_DIR = Path(__file__).parent.parent / "skills"
@@ -58,6 +59,10 @@ class SkillsLoader:
         Returns:
             List of skill info dicts with 'name', 'path', 'source'.
         """
+        logger.debug(
+            "[skills] list_skills start workspace={} builtin={} filter_unavailable={}",
+            self.workspace_skills, self.builtin_skills, filter_unavailable,
+        )
         skills = self._skill_entries_from_dir(self.workspace_skills, "workspace")
         workspace_names = {entry["name"] for entry in skills}
         if self.builtin_skills and self.builtin_skills.exists():
@@ -69,7 +74,11 @@ class SkillsLoader:
             skills = [s for s in skills if s["name"] not in self.disabled_skills]
 
         if filter_unavailable:
-            return [skill for skill in skills if self._check_requirements(self._get_skill_meta(skill["name"]))]
+            skills = [skill for skill in skills if self._check_requirements(self._get_skill_meta(skill["name"]))]
+        logger.debug(
+            "[skills] list_skills result count={} names={}",
+            len(skills), [s["name"] for s in skills],
+        )
         return skills
 
     def load_skill(self, name: str) -> str | None:
@@ -88,7 +97,9 @@ class SkillsLoader:
         for root in roots:
             path = root / name / "SKILL.md"
             if path.exists():
+                logger.debug("[skills] load_skill HIT name={} path={}", name, path)
                 return path.read_text(encoding="utf-8")
+        logger.debug("[skills] load_skill MISS name={} (searched {} roots)", name, len(roots))
         return None
 
     def load_skills_for_context(self, skill_names: list[str]) -> str:
@@ -122,6 +133,10 @@ class SkillsLoader:
             Markdown-formatted skills summary.
         """
         all_skills = self.list_skills(filter_unavailable=False)
+        logger.debug(
+            "[skills] build_skills_summary count={} exclude={}",
+            len(all_skills), exclude,
+        )
         if not all_skills:
             return ""
 
@@ -139,7 +154,9 @@ class SkillsLoader:
                 missing = self._get_missing_requirements(meta)
                 suffix = f" (unavailable: {missing})" if missing else " (unavailable)"
                 lines.append(f"- **{skill_name}** — {desc}{suffix}  `{entry['path']}`")
-        return "\n".join(lines)
+        summary = "\n".join(lines)
+        logger.debug("[skills] build_skills_summary done ({} lines)", len(lines))
+        return summary
 
     def _get_missing_requirements(self, skill_meta: dict) -> str:
         """Get a description of missing requirements."""
@@ -209,9 +226,17 @@ class SkillsLoader:
         requires = skill_meta.get("requires", {})
         required_bins = requires.get("bins", [])
         required_env_vars = requires.get("env", [])
-        return all(shutil.which(cmd) for cmd in required_bins) and all(
-            os.environ.get(var) for var in required_env_vars
-        )
+        bins_ok = all(shutil.which(cmd) for cmd in required_bins)
+        env_ok = all(os.environ.get(var) for var in required_env_vars)
+        ok = bins_ok and env_ok
+        if not ok:
+            missing_bins = [c for c in required_bins if not shutil.which(c)]
+            missing_env = [v for v in required_env_vars if not os.environ.get(v)]
+            logger.debug(
+                "[skills] requirements UNMET bins_missing={} env_missing={}",
+                missing_bins, missing_env,
+            )
+        return ok
 
     def _get_skill_meta(self, name: str) -> dict:
         """Get nanobot metadata for a skill (cached in frontmatter)."""
@@ -220,7 +245,7 @@ class SkillsLoader:
 
     def get_always_skills(self) -> list[str]:
         """Get skills marked as always=true that meet requirements."""
-        return [
+        always = [
             entry["name"]
             for entry in self.list_skills(filter_unavailable=True)
             if (meta := self.get_skill_metadata(entry["name"]) or {})
@@ -229,6 +254,8 @@ class SkillsLoader:
                 or meta.get("always")
             )
         ]
+        logger.debug("[skills] get_always_skills result={}", always)
+        return always
 
     def get_skill_metadata(self, name: str) -> dict | None:
         """
